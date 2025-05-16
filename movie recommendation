@@ -1,0 +1,71 @@
+import pandas as pd
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import linear_kernel
+from sklearn.model_selection import train_test_split
+from sklearn.neighbors import NearestNeighbors
+
+# 1. Data Collection
+try:
+    ratings = pd.read_excel('/content/movie_dataset_50.xlsx')  # Assuming your file is named 'movie_data.csv'
+except FileNotFoundError:
+    print("Error: '/content/movie_dataset_50.xlsx' not found.")
+    exit()
+
+# 2. Data Cleaning
+ratings.fillna('', inplace=True)
+ratings.drop_duplicates(inplace=True)
+# Rename the 'movie title' column to 'movieTitle' for consistency
+ratings.rename(columns={'movie title': 'movieTitle'}, inplace=True)
+
+
+# 3. Exploratory Data Analysis (EDA)
+print("Data Info:")
+print(ratings.info())
+print("\nFirst few rows:")
+print(ratings.head())
+
+# --- Content-Based Filtering ---
+# 4. Feature Engineering for Content-Based Filtering
+ratings['combined_features'] = ratings['genres']
+tfidf_vectorizer = TfidfVectorizer(stop_words='english')
+tfidf_matrix = tfidf_vectorizer.fit_transform(ratings['combined_features'])
+cosine_sim = linear_kernel(tfidf_matrix, tfidf_matrix)
+def get_content_based_recommendations(title, cosine_sim=cosine_sim):
+
+    if title not in ratings['movieTitle'].values:
+        return f"Movie title '{title}' not found in the dataset."
+    idx = ratings[ratings['movieTitle'] == title].index[0]
+    sim_scores = list(enumerate(cosine_sim[idx]))
+    sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
+    sim_scores = sim_scores[1:11]
+    movie_indices = [i[0] for i in sim_scores]
+    return ratings['movieTitle'].iloc[movie_indices].tolist()
+
+
+user_movie_matrix = ratings.pivot_table(index='userId', columns='movieTitle', values='rating') # Changed 'movie title' to 'movieTitle'
+user_movie_matrix = user_movie_matrix.fillna(0)
+model_knn = NearestNeighbors(metric='cosine', algorithm='brute')
+model_knn.fit(user_movie_matrix)
+
+def get_collaborative_recommendations(user_id):
+    if user_id not in user_movie_matrix.index:
+        return f"User ID {user_id} not found."
+
+    query_index = user_movie_matrix.index.get_loc(user_id)
+
+    distances, indices = model_knn.kneighbors(user_movie_matrix.iloc[query_index].values.reshape(1, -1), n_neighbors=10) # Find 10 nearest neighbors
+
+
+
+    similar_users = user_movie_matrix.iloc[indices.flatten()].index[1:]
+    recommendations = user_movie_matrix.loc[similar_users].mean(axis=0).sort_values(ascending=False)
+
+    rated_movies = user_movie_matrix.loc[user_id][user_movie_matrix.loc[user_id] > 0].index
+    recommendations = recommendations[~recommendations.index.isin(rated_movies)]
+
+    return recommendations.head(10).index.tolist()
+print("\n--- Content-Based Recommendations ---")
+print(get_content_based_recommendations('Master'))
+
+print("\n--- Collaborative Recommendations ---")
+print(get_collaborative_recommendations(1))
